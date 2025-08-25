@@ -1,16 +1,14 @@
-// next.config.js
-/** @type {import('next').NextConfig} */
+// next.config.mjs (ESM)
 const isProd = process.env.GITHUB_ACTIONS === 'true';
 
-module.exports = {
-  // Export estático (reemplaza al viejo `next export`)
-  output: 'export',
-
-  // Imprescindible para GitHub Pages si usas next/image
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  output: 'export',           
   images: { unoptimized: true },
-
-  // Si publicas en https://usuario.github.io/REPO, usa basePath/assetPrefix.
-  // Ajusta "programacionLineal" al nombre EXACTO del repo.
+  // Ajusta al NOMBRE EXACTO del repo (programacionLineal)
   basePath: isProd ? '/programacionLineal' : '',
   assetPrefix: isProd ? '/programacionLineal/' : '',
+  trailingSlash: true         
 };
+
+export default nextConfig;
