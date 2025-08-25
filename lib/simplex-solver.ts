@@ -1,3 +1,5 @@
+// lib/simplex-solver.ts
+
 export interface SimplexTableau {
   tableau: number[][]
   basicVariables: string[]
@@ -29,6 +31,24 @@ export interface SimplexStep {
   action: string
   details: string
   tableau?: SimplexTableau
+}
+
+/** Estructura interna para la forma estándar */
+interface StandardForm {
+  objectiveCoefficients: number[]
+  constraintMatrix: number[][]
+  rhsVector: number[]
+  variables: string[]
+  originalVariables: string[]
+  slackVariables: string[]
+  numOriginalVars: number
+  numConstraints: number
+}
+
+/** Resultado interno de extracción de solución */
+interface ExtractedSolution {
+  optimalValue: number
+  optimalSolution: Record<string, number>
 }
 
 export class SimplexSolver {
@@ -163,7 +183,7 @@ export class SimplexSolver {
     return {
       isOptimal: currentTableau.isOptimal,
       isUnbounded: currentTableau.isUnbounded,
-      isFeasible: true, // Assuming feasible for now
+      isFeasible: true, // Asumimos factible en esta versión
       optimalValue: solution.optimalValue,
       optimalSolution: solution.optimalSolution,
       iterations,
@@ -171,36 +191,33 @@ export class SimplexSolver {
     }
   }
 
+  // ==============================
+  // Internals
+  // ==============================
+
   private convertToStandardForm(
     objectiveCoefficients: number[],
     constraintMatrix: number[][],
     rhsVector: number[],
     isMaximization: boolean,
     variables: string[],
-  ) {
+  ): StandardForm {
     // Convert minimization to maximization
-    const objCoeffs = isMaximization ? [...objectiveCoefficients] : objectiveCoefficients.map((c) => -c)
+    const objCoeffs: number[] = isMaximization ? [...objectiveCoefficients] : objectiveCoefficients.map((c: number) => -c)
 
-    // Add slack variables for ≤ constraints
-    const numConstraints = constraintMatrix.length
-    const numOriginalVars = objectiveCoefficients.length
+    const numConstraints: number = constraintMatrix.length
+    const numOriginalVars: number = objectiveCoefficients.length
 
-    // Extended constraint matrix with slack variables
-    const extendedMatrix = constraintMatrix.map((row, i) => [
+    // Extend matrix with slack variables (identity matrix appended)
+    const extendedMatrix: number[][] = constraintMatrix.map((row: number[], i: number) => [
       ...row,
-      ...Array(numConstraints)
-        .fill(0)
-        .map((_, j) => (i === j ? 1 : 0)),
+      ...Array.from({ length: numConstraints }, (_: unknown, j: number) => (i === j ? 1 : 0)),
     ])
 
-    // Extended objective coefficients (slack variables have 0 coefficient)
-    const extendedObjCoeffs = [...objCoeffs, ...Array(numConstraints).fill(0)]
+    const extendedObjCoeffs: number[] = [...objCoeffs, ...Array(numConstraints).fill(0)]
 
-    // Variable names
-    const slackVariables = Array(numConstraints)
-      .fill(0)
-      .map((_, i) => `s${i + 1}`)
-    const allVariables = [...variables, ...slackVariables]
+    const slackVariables: string[] = Array.from({ length: numConstraints }, (_: unknown, i: number) => `s${i + 1}`)
+    const allVariables: string[] = [...variables, ...slackVariables]
 
     return {
       objectiveCoefficients: extendedObjCoeffs,
@@ -214,25 +231,34 @@ export class SimplexSolver {
     }
   }
 
-  private createInitialTableau(standardForm: any): SimplexTableau {
-    const { constraintMatrix, rhsVector, objectiveCoefficients, variables, slackVariables } = standardForm
+  private createInitialTableau(standardForm: StandardForm): SimplexTableau {
+    const {
+      constraintMatrix,
+      rhsVector,
+      objectiveCoefficients,
+      variables,
+      slackVariables,
+      numOriginalVars,
+    } = standardForm
 
-    // Create tableau matrix
-    const tableau = [
-      ...constraintMatrix.map((row, i) => [...row, rhsVector[i]]),
-      [...objectiveCoefficients.map((c) => -c), 0], // Objective row (negate for maximization)
+    // Build tableau: [A | b] and last row is objective (negated for maximization)
+    const tableau: number[][] = [
+      ...constraintMatrix.map((row: number[], i: number) => [...row, rhsVector[i]]),
+      [...objectiveCoefficients.map((c: number) => -c), 0],
     ]
 
-    // Initial basic variables are slack variables
-    const basicVariables = [...slackVariables]
-    const nonBasicVariables = variables.slice(0, standardForm.numOriginalVars)
+    const basicVariables: string[] = [...slackVariables]
+    const nonBasicVariables: string[] = variables.slice(0, numOriginalVars)
+
+    const objectiveRow: number[] = tableau[tableau.length - 1]
+    const rhsColumn: number[] = tableau.map((row: number[]) => row[row.length - 1])
 
     return {
       tableau,
       basicVariables,
       nonBasicVariables,
-      objectiveRow: tableau[tableau.length - 1],
-      rhsColumn: tableau.map((row) => row[row.length - 1]),
+      objectiveRow,
+      rhsColumn,
       iteration: 0,
       isOptimal: false,
       isUnbounded: false,
@@ -240,11 +266,11 @@ export class SimplexSolver {
   }
 
   private findEnteringVariable(tableau: SimplexTableau): number {
-    const objectiveRow = tableau.objectiveRow
+    const objectiveRow: number[] = tableau.objectiveRow
     let minValue = 0
     let enteringColumn = -1
 
-    // Only consider non-basic variables (original decision variables)
+    // Only consider non-basic vars (original decision variables)
     const searchColumns = tableau.nonBasicVariables.length
 
     for (let j = 0; j < searchColumns; j++) {
@@ -258,13 +284,12 @@ export class SimplexSolver {
   }
 
   private findLeavingVariable(tableau: SimplexTableau, enteringColumn: number): number {
-    const rhsColumn = tableau.rhsColumn
+    const rhsColumn: number[] = tableau.rhsColumn
     let minRatio = Number.POSITIVE_INFINITY
     let leavingRow = -1
 
-    // Minimum ratio test
+    // Minimum ratio test (exclude objective row)
     for (let i = 0; i < rhsColumn.length - 1; i++) {
-      // Exclude objective row
       const pivotElement = tableau.tableau[i][enteringColumn]
       if (pivotElement > 0) {
         const ratio = rhsColumn[i] / pivotElement
@@ -279,39 +304,41 @@ export class SimplexSolver {
   }
 
   private pivotOperation(tableau: SimplexTableau, pivotRow: number, pivotColumn: number): SimplexTableau {
-    const newTableau = tableau.tableau.map((row) => [...row])
-    const pivotElement = newTableau[pivotRow][pivotColumn]
+    const newTableau: number[][] = tableau.tableau.map((row: number[]) => [...row])
+    const pivotElement: number = newTableau[pivotRow][pivotColumn]
 
     // Normalize pivot row
     for (let j = 0; j < newTableau[pivotRow].length; j++) {
       newTableau[pivotRow][j] /= pivotElement
     }
 
-    // Eliminate other elements in pivot column
+    // Eliminate other rows in pivot column
     for (let i = 0; i < newTableau.length; i++) {
       if (i !== pivotRow) {
-        const multiplier = newTableau[i][pivotColumn]
+        const multiplier: number = newTableau[i][pivotColumn]
         for (let j = 0; j < newTableau[i].length; j++) {
           newTableau[i][j] -= multiplier * newTableau[pivotRow][j]
         }
       }
     }
 
-    // Update basic and non-basic variables
-    const newBasicVariables = [...tableau.basicVariables]
-    const newNonBasicVariables = [...tableau.nonBasicVariables]
+    // Update basic/non-basic variables (swap)
+    const newBasicVariables: string[] = [...tableau.basicVariables]
+    const newNonBasicVariables: string[] = [...tableau.nonBasicVariables]
 
-    // Swap variables
-    const temp = newBasicVariables[pivotRow]
+    const tmp = newBasicVariables[pivotRow]
     newBasicVariables[pivotRow] = newNonBasicVariables[pivotColumn]
-    newNonBasicVariables[pivotColumn] = temp
+    newNonBasicVariables[pivotColumn] = tmp
+
+    const objectiveRow: number[] = newTableau[newTableau.length - 1]
+    const rhsColumn: number[] = newTableau.map((row: number[]) => row[row.length - 1])
 
     return {
       tableau: newTableau,
       basicVariables: newBasicVariables,
       nonBasicVariables: newNonBasicVariables,
-      objectiveRow: newTableau[newTableau.length - 1],
-      rhsColumn: newTableau.map((row) => row[row.length - 1]),
+      objectiveRow,
+      rhsColumn,
       iteration: tableau.iteration + 1,
       isOptimal: false,
       isUnbounded: false,
@@ -321,40 +348,39 @@ export class SimplexSolver {
   }
 
   private isOptimal(tableau: SimplexTableau): boolean {
-    // Check if all coefficients in objective row are non-negative
-    const objectiveRow = tableau.objectiveRow
+    const objectiveRow: number[] = tableau.objectiveRow
+    // All coefficients (excluding RHS) must be >= 0
     for (let j = 0; j < objectiveRow.length - 1; j++) {
       if (objectiveRow[j] < -1e-10) {
-        // Use small epsilon for numerical stability
         return false
       }
     }
     return true
   }
 
-  private extractSolution(tableau: SimplexTableau, originalVariables: string[], isMaximization: boolean) {
-    const solution: { [variable: string]: number } = {}
+  private extractSolution(
+    tableau: SimplexTableau,
+    originalVariables: string[],
+    isMaximization: boolean
+  ): ExtractedSolution {
+    const solution: Record<string, number> = {}
 
     // Initialize all original variables to 0
-    originalVariables.forEach((variable) => {
-      solution[variable] = 0
+    originalVariables.forEach((v: string) => {
+      solution[v] = 0
     })
 
-    // Set values for basic variables
-    tableau.basicVariables.forEach((variable, i) => {
+    // Set values for basic variables that are original decision vars
+    tableau.basicVariables.forEach((variable: string, i: number) => {
       if (originalVariables.includes(variable)) {
         solution[variable] = tableau.rhsColumn[i]
       }
     })
 
-    // Get optimal value
-    const optimalValue = isMaximization
-      ? tableau.rhsColumn[tableau.rhsColumn.length - 1]
-      : -tableau.rhsColumn[tableau.rhsColumn.length - 1]
+    // Optimal value is RHS of objective row (with sign for min problems)
+    const raw: number = tableau.rhsColumn[tableau.rhsColumn.length - 1]
+    const optimalValue: number = isMaximization ? raw : -raw
 
-    return {
-      optimalValue,
-      optimalSolution: solution,
-    }
+    return { optimalValue, optimalSolution: solution }
   }
 }
