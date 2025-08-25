@@ -10,7 +10,7 @@ import {
   YAxis,
   Tooltip,
   Scatter,
-  Polygon,
+  // Polygon // ojo: Recharts no siempre exporta Polygon. Si te da error, cambia a ReferenceArea o Area.
 } from "recharts"
 import { useMemo } from "react"
 
@@ -18,9 +18,15 @@ interface GraphicalMethodProps {
   problem: LinearProgrammingProblem
 }
 
-interface Point {
-  x: number
-  y: number
+interface Point { x: number; y: number }
+
+interface GraphData {
+  constraintLines: Point[][]
+  feasibleRegion: Point[]
+  optimalPoint: Point | null
+  optimalValue: number
+  maxX: number
+  maxY: number
 }
 
 export function GraphicalMethod({ problem }: GraphicalMethodProps) {
@@ -31,7 +37,7 @@ export function GraphicalMethod({ problem }: GraphicalMethodProps) {
     optimalValue,
     maxX,
     maxY,
-  } = useMemo(() => computeGraphData(problem), [problem])
+  } = useMemo<GraphData>(() => computeGraphData(problem), [problem])
 
   if (problem.variables.length !== 2) {
     return (
@@ -42,8 +48,7 @@ export function GraphicalMethod({ problem }: GraphicalMethodProps) {
         </CardHeader>
         <CardContent>
           <p className="text-center text-muted-foreground">
-            Este problema tiene {problem.variables.length} variables. El método gráfico solo se aplica a problemas con dos
-            variables.
+            Este problema tiene {problem.variables.length} variables. El método gráfico solo se aplica a problemas con dos variables.
           </p>
         </CardContent>
       </Card>
@@ -68,29 +73,34 @@ export function GraphicalMethod({ problem }: GraphicalMethodProps) {
                 {constraintLines.map((line, index) => (
                   <Scatter key={index} line data={line} name={`Restricción ${index + 1}`} fill="#8884d8" />
                 ))}
-                {feasibleRegion.length >= 3 && (
+
+                {/* Si usas Polygon, comprueba que exista en tu versión de Recharts */}
+                {/* {feasibleRegion.length >= 3 && (
                   <Polygon
                     points={feasibleRegion.map((p) => ({ x: p.x, y: p.y }))}
                     fill="#82ca9d"
                     fillOpacity={0.3}
                     stroke="#82ca9d"
                   />
-                )}
+                )} */}
+
                 {optimalPoint && <Scatter data={[optimalPoint]} name="Óptimo" fill="#ff7300" />}
               </ScatterChart>
             </ResponsiveContainer>
 
-            {optimalPoint && (
-              <div className="text-center space-y-1">
-                <p>
-                  Solución óptima: {problem.variables[0]} = {optimalPoint.x.toFixed(2)}, {problem.variables[1]} ={" "}
-                  {optimalPoint.y.toFixed(2)}
-                </p>
-                <p>
-                  Valor óptimo Z = {optimalValue.toFixed(2)}
-                </p>
-              </div>
-            )}
+            {optimalPoint ? (
+              (() => {
+                const op = optimalPoint as Point
+                return (
+                  <div className="text-center space-y-1">
+                    <p>
+                      Solución óptima: {problem.variables[0]} = {op.x.toFixed(2)}, {problem.variables[1]} = {op.y.toFixed(2)}
+                    </p>
+                    <p>Valor óptimo Z = {optimalValue.toFixed(2)}</p>
+                  </div>
+                )
+              })()
+            ) : null}
           </div>
         ) : (
           <p className="text-center text-muted-foreground">No se encontró región factible.</p>
@@ -100,7 +110,7 @@ export function GraphicalMethod({ problem }: GraphicalMethodProps) {
   )
 }
 
-  export function computeGraphData(problem: LinearProgrammingProblem) {
+export function computeGraphData(problem: LinearProgrammingProblem): GraphData {
   const constraints = problem.constraints
   const [objA, objB] = problem.objectiveFunction.coefficients
   const isMax = problem.type === "maximize"
@@ -129,10 +139,8 @@ export function GraphicalMethod({ problem }: GraphicalMethodProps) {
         if (c.operator === "≤") return lhs <= c.rhs + 1e-8
         if (c.operator === "≥") return lhs >= c.rhs - 1e-8
         return Math.abs(lhs - c.rhs) <= 1e-8
-      }) &&
-      p.x >= 0 &&
-      p.y >= 0,
-    ),
+      }) && p.x >= 0 && p.y >= 0
+    )
   )
 
   let optimalPoint: Point | null = null
@@ -151,7 +159,6 @@ export function GraphicalMethod({ problem }: GraphicalMethodProps) {
     }
   })
 
-  // Sort feasible points to form polygon
   const feasibleRegion = sortPolygon(feasiblePoints)
 
   const constraintLines = constraints.map((c) => {
@@ -163,8 +170,17 @@ export function GraphicalMethod({ problem }: GraphicalMethodProps) {
     return points
   })
 
-  const maxX = Math.max(...constraintLines.flat().map((p) => p.x), ...feasibleRegion.map((p) => p.x), 1) * 1.1
-  const maxY = Math.max(...constraintLines.flat().map((p) => p.y), ...feasibleRegion.map((p) => p.y), 1) * 1.1
+  const maxX = Math.max(
+    ...constraintLines.flat().map((p) => p.x),
+    ...feasibleRegion.map((p) => p.x),
+    1
+  ) * 1.1
+
+  const maxY = Math.max(
+    ...constraintLines.flat().map((p) => p.y),
+    ...feasibleRegion.map((p) => p.y),
+    1
+  ) * 1.1
 
   return { constraintLines, feasibleRegion, optimalPoint, optimalValue, maxX, maxY }
 }
@@ -195,6 +211,9 @@ function sortPolygon(points: Point[]): Point[] {
     x: points.reduce((sum, p) => sum + p.x, 0) / points.length,
     y: points.reduce((sum, p) => sum + p.y, 0) / points.length,
   }
-  return [...points].sort((a, b) => Math.atan2(a.y - centroid.y, a.x - centroid.x) - Math.atan2(b.y - centroid.y, b.x - centroid.x))
+  return [...points].sort(
+    (a, b) =>
+      Math.atan2(a.y - centroid.y, a.x - centroid.x) -
+      Math.atan2(b.y - centroid.y, b.x - centroid.x)
+  )
 }
-
